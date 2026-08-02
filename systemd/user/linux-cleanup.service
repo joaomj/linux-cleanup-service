@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Linux and OpenCode storage cleanup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.local/libexec/linux-cleanup-service/cleanup.py
+EnvironmentFile=-%h/.config/linux-cleanup-service/environment
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
