@@ -9,7 +9,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from config import Config, format_bytes, load_config
+from config import Config, format_bytes, load_config, SERVICE_NAME
+
+
+SERVICE_LABEL = "com.user.macos-cleanup-service" if sys.platform == "darwin" else "linux-cleanup.service"
+SHELL_PREFIX = "[macos-cleanup]" if sys.platform == "darwin" else "[linux-cleanup]"
 
 
 def read_status(config: Config) -> dict[str, Any] | None:
@@ -23,7 +27,14 @@ def read_status(config: Config) -> dict[str, Any] | None:
 
 
 def service_is_active() -> bool:
-    """Return whether the user service is active."""
+    """Return whether the service unit is active."""
+    if sys.platform == "darwin":
+        return _service_is_active_macos()
+    return _service_is_active_linux()
+
+
+def _service_is_active_linux() -> bool:
+    """Check systemd user service on Linux."""
     try:
         result = subprocess.run(
             ["systemctl", "--user", "is-active", "linux-cleanup.service"],
@@ -37,6 +48,21 @@ def service_is_active() -> bool:
     return result.returncode == 0 and result.stdout.strip() in {"active", "activating"}
 
 
+def _service_is_active_macos() -> bool:
+    """Check launchd job on macOS."""
+    try:
+        result = subprocess.run(
+            ["launchctl", "list", SERVICE_LABEL],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and SERVICE_LABEL in result.stdout
+
+
 def format_value(status: dict[str, Any], key: str) -> str:
     """Format a byte field from a status record."""
     value = status.get(key)
@@ -47,12 +73,12 @@ def render_shell(config: Config) -> str:
     """Render one concise shell status line."""
     status = read_status(config)
     if status is None:
-        return "[linux-cleanup] running | first daily cleanup has started"
+        return f"{SHELL_PREFIX} running | first daily cleanup has started"
     state = str(status.get("status", "unknown"))
     if state == "running" and not service_is_active():
         state = "failed"
         status.setdefault("errors", []).append("cleanup stopped before it wrote a final result")
-    parts = [f"[linux-cleanup] {state}"]
+    parts = [f"{SHELL_PREFIX} {state}"]
     if status.get("finished_at"):
         parts.append(str(status["finished_at"]))
     if isinstance(status.get("deleted_roots"), int):

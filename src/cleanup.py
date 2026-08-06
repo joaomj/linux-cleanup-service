@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -88,8 +89,8 @@ def database_size(config: Config) -> int:
     return sum(measure_path(Path(f"{config.opencode_db}{suffix}")) for suffix in ("", "-wal", "-shm"))
 
 
-def process_is_running(names: set[str]) -> bool:
-    """Check processes owned by this user without matching command arguments."""
+def _process_is_running_linux(names: set[str]) -> bool:
+    """Check processes on Linux via /proc."""
     proc = Path("/proc")
     for entry in proc.iterdir():
         if not entry.name.isdigit():
@@ -108,6 +109,33 @@ def process_is_running(names: set[str]) -> bool:
         if name in names:
             return True
     return False
+
+
+def _process_is_running_macos(names: set[str]) -> bool:
+    """Check processes on macOS via pgrep."""
+    import shutil as _shutil
+
+    pgrep_bin = _shutil.which("pgrep")
+    if pgrep_bin is None:
+        return False
+    for name in names:
+        result = subprocess.run(
+            [pgrep_bin, "-u", str(os.getuid()), "-x", name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+    return False
+
+
+def process_is_running(names: set[str]) -> bool:
+    """Check processes owned by this user."""
+    if sys.platform == "darwin":
+        return _process_is_running_macos(names)
+    return _process_is_running_linux(names)
 
 
 def stale_roots(config: Config, cutoff_ms: int) -> list[dict[str, Any]]:
@@ -180,7 +208,9 @@ def parse_journal_size(output: str) -> int | None:
 
 
 def journal_size(user: bool, config: Config) -> tuple[int | None, str | None]:
-    """Read system or user journal usage."""
+    """Read system or user journal usage (Linux only)."""
+    if sys.platform != "linux":
+        return None, None
     command = ["journalctl"]
     if user:
         command.append("--user")
@@ -193,7 +223,9 @@ def journal_size(user: bool, config: Config) -> tuple[int | None, str | None]:
 
 
 def vacuum_journal(user: bool, config: Config, current_size: int | None, warnings: list[str]) -> int | None:
-    """Vacuum an oversized journal without prompting for credentials."""
+    """Vacuum an oversized journal without prompting for credentials (Linux only)."""
+    if sys.platform != "linux":
+        return current_size
     if current_size is None or current_size <= config.journal_warn_size:
         return current_size
     command_prefix = ["journalctl", "--user"] if user else ["sudo", "-n", "journalctl"]

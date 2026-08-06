@@ -52,7 +52,11 @@ def rotate_backups(config: Config, now: datetime) -> None:
     """Keep recent backups within configured age, count, and size limits."""
     if not config.backup_dir.is_dir():
         return
-    backups = sorted(config.backup_dir.glob("opencode-*.db.zst"), key=lambda path: path.stat().st_mtime, reverse=True)
+    backups = sorted(
+        list(config.backup_dir.glob("opencode-*.db.zst")) + list(config.backup_dir.glob("opencode-*.db")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     cutoff = now - timedelta(days=config.opencode_backup_retention_days)
     retained: list[Path] = []
     for backup in backups:

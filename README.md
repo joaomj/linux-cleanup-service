@@ -7,6 +7,9 @@ The service manages OpenCode session data, the OpenCode update, selected user
 caches, and journal size reporting. It keeps all thresholds in a user
 environment file.
 
+> On macOS the service is named `macos-cleanup-service` and installs a launchd
+> job instead of a systemd unit. See the [macOS port](macos/README.md).
+
 ## Install
 
 Run:
