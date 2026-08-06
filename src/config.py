@@ -120,7 +120,9 @@ class Config:
     uv_cache: Path
     brave_cache: Path
     npm_cache: Path
+    temp_root: Path
     session_retention_days: int
+    temp_retention_days: int
     opencode_db_warn_size: int
     opencode_backup_max_size: int
     opencode_backup_max_count: int
@@ -161,6 +163,9 @@ def load_config() -> Config:
     state_dir = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")) / "linux-cleanup-service"
     data_dir = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")) / "opencode"
     cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache"))
+    temp_root = Path(_value(values, "TEMP_ROOT", "/tmp/opencode")).expanduser()
+    if not temp_root.is_absolute():
+        raise ConfigurationError("TEMP_ROOT must be an absolute path")
     return Config(
         home=home,
         state_dir=state_dir,
@@ -176,7 +181,9 @@ def load_config() -> Config:
             _value(values, "BRAVE_CACHE_PATH", str(cache_dir / "BraveSoftware" / "Brave-Browser"))
         ),
         npm_cache=Path(_value(values, "NPM_CACHE_PATH", str(home / ".npm"))),
+        temp_root=temp_root,
         session_retention_days=integer("SESSION_RETENTION_DAYS", "7"),
+        temp_retention_days=integer("TEMP_RETENTION_DAYS", "7"),
         opencode_db_warn_size=size("OPENCODE_DB_WARN_SIZE", "2GiB"),
         opencode_backup_max_size=size("OPENCODE_BACKUP_MAX_SIZE", "4GiB"),
         opencode_backup_max_count=integer("OPENCODE_BACKUP_MAX_COUNT", "2"),

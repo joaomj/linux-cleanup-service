@@ -14,6 +14,8 @@ Process environment variables override file values. The file uses simple
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SESSION_RETENTION_DAYS` | `7` | Delete inactive session trees after this many days. |
+| `TEMP_ROOT` | `/tmp/opencode` | Root directory for temporary OpenCode workspaces. |
+| `TEMP_RETENTION_DAYS` | `7` | Delete inactive temporary workspaces after this many days. |
 | `OPENCODE_BACKUP_MAX_COUNT` | `2` | Maximum number of compressed database backups. |
 | `OPENCODE_BACKUP_RETENTION_DAYS` | `14` | Maximum backup age. |
 | `OPENCODE_BACKUP_MAX_SIZE` | `4GiB` | Aggregate backup size target. |

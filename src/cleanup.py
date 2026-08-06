@@ -110,6 +110,108 @@ def process_is_running(names: set[str]) -> bool:
     return False
 
 
+def process_uses_path(path: Path) -> bool:
+    """Return whether a process owned by this user has a handle in a path."""
+    root = path.resolve()
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return False
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "status").read_text(encoding="utf-8")
+            uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
+            if int(uid_line.split()[1]) != os.getuid():
+                continue
+            links = [entry / "cwd"]
+            links.extend((entry / "fd").iterdir())
+            for link in links:
+                candidate = Path(os.path.realpath(link))
+                try:
+                    candidate.relative_to(root)
+                except ValueError:
+                    continue
+                return True
+        except (FileNotFoundError, PermissionError, OSError, StopIteration, ValueError):
+            continue
+    return False
+
+
+def remove_temp_workspace(path: Path, config: Config) -> None:
+    """Remove a workspace and keep Git worktree metadata consistent."""
+    git_marker = path / ".git"
+    if git_marker.is_file():
+        git = shutil.which("git")
+        if git is None:
+            raise RuntimeError(f"Git is required to remove linked worktree: {path}")
+        code, _, stderr = run_command(
+            [git, "-C", str(path), "worktree", "remove", "--force", str(path)], config
+        )
+        if code != 0:
+            raise RuntimeError(stderr or f"git worktree remove failed for {path}")
+        return
+    shutil.rmtree(path)
+
+
+def clean_temp_workspaces(config: Config, now: datetime, dry_run: bool, warnings: list[str]) -> dict[str, int]:
+    """Remove inactive, user-owned temporary workspaces after the retention period."""
+    result = {
+        "temp_candidates": 0,
+        "temp_deleted": 0,
+        "temp_deleted_bytes": 0,
+        "temp_skipped_active": 0,
+        "temp_skipped_recent": 0,
+        "temp_skipped_unsafe": 0,
+    }
+    root = config.temp_root
+    if not root.exists():
+        return result
+    if root.is_symlink() or not root.is_dir():
+        warnings.append(f"temporary root is not a real directory: {root}")
+        return result
+
+    try:
+        root_device = root.stat().st_dev
+        entries = sorted(root.iterdir(), key=lambda item: item.name)
+    except OSError as error:
+        warnings.append(f"temporary root could not be inspected: {error}")
+        return result
+
+    cutoff = now - timedelta(days=config.temp_retention_days)
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_dir():
+            result["temp_skipped_unsafe"] += 1
+            continue
+        try:
+            metadata = entry.stat()
+            if metadata.st_uid != os.getuid() or metadata.st_dev != root_device:
+                result["temp_skipped_unsafe"] += 1
+                continue
+            result["temp_candidates"] += 1
+            modified = datetime.fromtimestamp(metadata.st_mtime, tz=now.tzinfo)
+            if modified >= cutoff:
+                result["temp_skipped_recent"] += 1
+                continue
+            if process_uses_path(entry):
+                result["temp_skipped_active"] += 1
+                continue
+            size = measure_path(entry)
+            if dry_run:
+                result["temp_deleted"] += 1
+                result["temp_deleted_bytes"] += size
+                continue
+            if process_uses_path(entry):
+                result["temp_skipped_active"] += 1
+                continue
+            remove_temp_workspace(entry, config)
+            result["temp_deleted"] += 1
+            result["temp_deleted_bytes"] += size
+        except (OSError, RuntimeError) as error:
+            warnings.append(f"temporary workspace cleanup failed for {entry}: {error}")
+    return result
+
+
 def stale_roots(config: Config, cutoff_ms: int) -> list[dict[str, Any]]:
     """Find root session trees with no activity after the cutoff."""
     if not config.opencode_db.is_file():
@@ -343,6 +445,7 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
         "backup_bytes": 0,
         "dry_run": dry_run,
     }
+    result.update(clean_temp_workspaces(config, now, dry_run, warnings))
     result["opencode_version"] = upgrade_opencode(config, warnings, dry_run)
     result["uv_cache_bytes"] = prune_uv_cache(config, warnings, dry_run)
     result["brave_cache_bytes"] = manage_brave_cache(config, warnings, dry_run)

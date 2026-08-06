@@ -28,6 +28,22 @@ class ConfigurationTest(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             parse_size("4bananas", "TEST")
 
+    def test_temp_root_must_be_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = temp_dir
+            config_dir = Path(temp_dir) / "linux-cleanup-service"
+            config_dir.mkdir()
+            (config_dir / "environment").write_text("TEMP_ROOT=relative\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SRC / "config.py")],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+
     def test_format_bytes_is_compact(self) -> None:
         self.assertEqual(format_bytes(1_048_576), "1.0MiB")
 
