@@ -340,12 +340,11 @@ def upgrade_opencode(config: Config, warnings: list[str], dry_run: bool) -> str 
 
 def prune_uv_cache(config: Config, warnings: list[str], dry_run: bool) -> int:
     """Prune unreferenced UV cache files above the configured threshold."""
-    size = measure_path(config.uv_cache)
-    if size <= config.uv_cache_max_size or dry_run:
-        return size
     uv = shutil.which("uv")
     if uv is None:
-        warnings.append("UV cache exceeds its limit but uv is not installed")
+        return 0
+    size = measure_path(config.uv_cache)
+    if size <= config.uv_cache_max_size or dry_run:
         return size
     code, _, stderr = run_command([uv, "cache", "prune"], config)
     if code != 0:
