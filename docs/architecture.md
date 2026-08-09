@@ -11,7 +11,8 @@ interactive Bash shell
         |                       |
         |                       +--> cleanup.py
         |                              |
-        |                              +--> OpenCode updater
+         |                              +--> APT and Snap updaters
+         |                              +--> OpenCode updater
         |                              +--> cache measurements
         |                              +--> SQLite backup and session deletion
         |                              +--> journal measurements
@@ -25,7 +26,8 @@ an exclusive file lock and a local-date marker. Therefore only the first
 successful start attempt of each day performs work.
 
 The service runs as the user. It can manage user files and the user journal.
-The installer uses `sudo` once to install the system journald limit.
+The daily APT and Snap actions use non-interactive `sudo`. The installer also
+uses `sudo` to install the system journald limit.
 
 ## Database Safety
 

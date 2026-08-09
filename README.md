@@ -3,9 +3,9 @@
 Run one safe storage cleanup pass after the first interactive Bash shell of
 each day.
 
-The service manages OpenCode session data, the OpenCode update, selected user
-caches, and journal size reporting. It keeps all thresholds in a user
-environment file.
+The service manages OpenCode session data, system package updates, selected user
+caches, and journal size reporting. It supports user settings in an environment
+file.
 
 ## Install
 
@@ -44,6 +44,8 @@ UV_CACHE_MAX_SIZE=1GiB
 BRAVE_CACHE_MAX_SIZE=2GiB
 JOURNAL_WARN_SIZE=100MiB
 OPENCODE_DB_WARN_SIZE=2GiB
+APT_UPDATES_ENABLED=true
+SNAP_UPDATES_ENABLED=true
 ```
 
 The service reads this file once at the start of each run. Process environment
@@ -55,16 +57,22 @@ The size parser accepts `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`.
 
 The service performs these actions once per calendar day:
 
-1. Upgrade OpenCode with its standalone installer.
-2. Measure the Brave, UV, and npm caches.
-3. Run `uv cache prune` above the UV threshold.
-4. Clear the Brave cache above its threshold when Brave is stopped.
-5. Skip Brave cleanup and report a warning when Brave is running.
-6. Back up the OpenCode database before session deletion.
-7. Delete session trees inactive for seven days.
-8. Checkpoint SQLite and vacuum free pages when safe.
-9. Rotate OpenCode backups and logs.
-10. Measure system and user journal usage.
+1. Run `sudo -n apt-get update`.
+2. Run `sudo -n apt-get upgrade -y` when the APT update succeeds.
+3. Run `sudo -n snap refresh`.
+4. Upgrade OpenCode with its standalone installer.
+5. Measure the Brave, UV, and npm caches.
+6. Run `uv cache prune` above the UV threshold.
+7. Clear the Brave cache above its threshold when Brave is stopped.
+8. Skip Brave cleanup and report a warning when Brave is running.
+9. Back up the OpenCode database before session deletion.
+10. Delete session trees inactive for seven days.
+11. Checkpoint SQLite and vacuum free pages when safe.
+12. Rotate OpenCode backups and logs.
+13. Measure system and user journal usage.
+
+APT and Snap updates use non-interactive `sudo`. If `sudo` needs a password,
+the service records a warning and continues the remaining cleanup.
 
 The service never deletes OpenCode sessions without a successful database
 backup. It uses `opencode session delete`, not direct event-table deletion.

@@ -34,6 +34,16 @@ Process environment variables override file values. The file uses simple
 
 The service ignores Zed files.
 
+## System Updates
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `APT_UPDATES_ENABLED` | `true` | Run `apt-get update` and `apt-get upgrade -y`. |
+| `SNAP_UPDATES_ENABLED` | `true` | Run `snap refresh`. |
+
+The service runs these commands with non-interactive `sudo`. Set either value
+to `false` to disable that update action.
+
 ## Journal Settings
 
 | Variable | Default |

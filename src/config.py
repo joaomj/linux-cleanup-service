@@ -141,6 +141,8 @@ class Config:
     command_timeout_seconds: int
     opencode_upgrade_enabled: bool
     opencode_upgrade_method: str
+    apt_updates_enabled: bool
+    snap_updates_enabled: bool
 
 
 def load_config() -> Config:
@@ -204,6 +206,8 @@ def load_config() -> Config:
             _value(values, "OPENCODE_UPGRADE_ENABLED", "true"), "OPENCODE_UPGRADE_ENABLED"
         ),
         opencode_upgrade_method=journal_method,
+        apt_updates_enabled=parse_bool(_value(values, "APT_UPDATES_ENABLED", "true"), "APT_UPDATES_ENABLED"),
+        snap_updates_enabled=parse_bool(_value(values, "SNAP_UPDATES_ENABLED", "true"), "SNAP_UPDATES_ENABLED"),
     )
 
 

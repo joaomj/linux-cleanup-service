@@ -338,6 +338,52 @@ def upgrade_opencode(config: Config, warnings: list[str], dry_run: bool) -> str 
     return opencode_version(config) or before
 
 
+def update_apt(config: Config, warnings: list[str], dry_run: bool) -> str:
+    """Refresh APT package lists and install available upgrades."""
+    if not config.apt_updates_enabled:
+        return "disabled"
+    if dry_run:
+        return "dry-run"
+    apt_get = shutil.which("apt-get")
+    if apt_get is None:
+        warnings.append("APT updates skipped because apt-get is not installed")
+        return "unavailable"
+    sudo = shutil.which("sudo")
+    if sudo is None:
+        warnings.append("APT updates failed because sudo is not installed")
+        return "failed"
+    code, stdout, stderr = run_command([sudo, "-n", apt_get, "update"], config)
+    if code != 0:
+        warnings.append(f"APT package list update failed: {stderr or stdout or 'unknown error'}")
+        return "failed"
+    code, stdout, stderr = run_command([sudo, "-n", apt_get, "upgrade", "-y"], config)
+    if code != 0:
+        warnings.append(f"APT package upgrade failed: {stderr or stdout or 'unknown error'}")
+        return "failed"
+    return "updated"
+
+
+def update_snap(config: Config, warnings: list[str], dry_run: bool) -> str:
+    """Refresh installed Snap packages."""
+    if not config.snap_updates_enabled:
+        return "disabled"
+    if dry_run:
+        return "dry-run"
+    snap = shutil.which("snap")
+    if snap is None:
+        warnings.append("Snap updates skipped because snap is not installed")
+        return "unavailable"
+    sudo = shutil.which("sudo")
+    if sudo is None:
+        warnings.append("Snap updates failed because sudo is not installed")
+        return "failed"
+    code, stdout, stderr = run_command([sudo, "-n", snap, "refresh"], config)
+    if code != 0:
+        warnings.append(f"Snap refresh failed: {stderr or stdout or 'unknown error'}")
+        return "failed"
+    return "updated"
+
+
 def prune_uv_cache(config: Config, warnings: list[str], dry_run: bool) -> int:
     """Prune unreferenced UV cache files above the configured threshold."""
     uv = shutil.which("uv")
@@ -445,6 +491,8 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
         "dry_run": dry_run,
     }
     result.update(clean_temp_workspaces(config, now, dry_run, warnings))
+    result["apt_updates"] = update_apt(config, warnings, dry_run)
+    result["snap_updates"] = update_snap(config, warnings, dry_run)
     result["opencode_version"] = upgrade_opencode(config, warnings, dry_run)
     result["uv_cache_bytes"] = prune_uv_cache(config, warnings, dry_run)
     result["brave_cache_bytes"] = manage_brave_cache(config, warnings, dry_run)

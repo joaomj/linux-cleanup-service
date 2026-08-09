@@ -23,8 +23,23 @@ python3 ~/.local/libexec/linux-cleanup-service/cleanup.py --dry-run --force
 ```
 
 The dry run measures current state and finds stale sessions. It does not update
-OpenCode, prune UV, clear Brave, create backups, delete sessions, or vacuum
-SQLite.
+APT, Snap, or OpenCode. It does not prune UV, clear Brave, create backups,
+delete sessions, or vacuum SQLite.
+
+## System Updates
+
+The daily run uses these commands:
+
+```bash
+sudo -n apt-get update
+sudo -n apt-get upgrade -y
+sudo -n snap refresh
+```
+
+The service runs the APT upgrade only after the package-list update succeeds.
+If an update fails, the service records a warning and continues its cleanup.
+The service does not ask for a password. Configure `sudo` for non-interactive
+use or set `APT_UPDATES_ENABLED=false` or `SNAP_UPDATES_ENABLED=false`.
 
 ## Retry After a Failure
 

@@ -59,6 +59,9 @@ def render_shell(config: Config) -> str:
         parts.append(f"deleted {status['deleted_roots']} roots/{status.get('deleted_sessions', '?')} sessions")
     if isinstance(status.get("opencode_version"), str):
         parts.append(f"OpenCode {status['opencode_version']}")
+    for key, label in (("apt_updates", "APT"), ("snap_updates", "Snap")):
+        if isinstance(status.get(key), str):
+            parts.append(f"{label} {status[key]}")
     for key, label in (
         ("db_bytes", "DB"),
         ("backup_bytes", "backup"),
