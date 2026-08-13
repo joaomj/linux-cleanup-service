@@ -74,6 +74,12 @@ The service performs these actions once per calendar day:
 APT and Snap updates use non-interactive `sudo`. If `sudo` needs a password,
 the service records a warning and continues the remaining cleanup.
 
+Account-level runs skip tasks and metrics that the account cannot inspect or
+execute, such as system journal details or root-only package updates. These
+tasks appear in the `skipped` field of the JSON status record and do not make a
+successful cleanup a warning. Failures on resources owned by the account still
+appear as warnings or errors.
+
 The service never deletes OpenCode sessions without a successful database
 backup. It uses `opencode session delete`, not direct event-table deletion.
 

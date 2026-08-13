@@ -41,7 +41,7 @@ class TemporaryCleanupTest(unittest.TestCase):
             os.environ["XDG_CONFIG_HOME"] = str(config_home)
             try:
                 config = load_config()
-                result = clean_temp_workspaces(config, now, False, [])
+                result = clean_temp_workspaces(config, now, False, [], [])
             finally:
                 os.environ.pop("XDG_CONFIG_HOME", None)
             self.assertEqual(result["temp_deleted"], 1)

@@ -75,6 +75,9 @@ def render_shell(config: Config) -> str:
             parts.append(f"{label} {format_value(status, key)}")
     warnings = status.get("warnings", [])
     errors = status.get("errors", [])
+    skipped = status.get("skipped", [])
+    if skipped:
+        parts.append("skipped: " + ", ".join(str(item) for item in skipped[:2]))
     if warnings:
         parts.append("warning: " + "; ".join(str(item) for item in warnings[:2]))
     if errors:

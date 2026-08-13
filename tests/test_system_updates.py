@@ -81,8 +81,9 @@ printf 'snap %s\\n' "$*" >> "$UPDATE_LOG"
                 self.configure_fake_commands(command_dir, log_path)
                 config = load_config()
                 warnings: list[str] = []
-                self.assertEqual(update_apt(config, warnings, False), "updated")
-                self.assertEqual(update_snap(config, warnings, False), "updated")
+                skipped: list[str] = []
+                self.assertEqual(update_apt(config, warnings, skipped, False), "updated")
+                self.assertEqual(update_snap(config, warnings, skipped, False), "updated")
             finally:
                 for key, value in original.items():
                     if value is None:
@@ -119,8 +120,9 @@ printf 'snap %s\\n' "$*" >> "$UPDATE_LOG"
                 self.configure_fake_commands(command_dir, log_path)
                 config = load_config()
                 warnings: list[str] = []
-                self.assertEqual(update_apt(config, warnings, False), "failed")
-                self.assertEqual(update_snap(config, warnings, False), "updated")
+                skipped: list[str] = []
+                self.assertEqual(update_apt(config, warnings, skipped, False), "failed")
+                self.assertEqual(update_snap(config, warnings, skipped, False), "updated")
             finally:
                 for key, value in original.items():
                     if value is None:

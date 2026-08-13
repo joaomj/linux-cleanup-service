@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from config import ConfigurationError, format_bytes, parse_size
-from cleanup import parse_journal_size
+from config import ConfigurationError, format_bytes, load_config, parse_size
+from cleanup import journal_size, parse_journal_size
 
 
 class ConfigurationTest(unittest.TestCase):
@@ -49,6 +49,67 @@ class ConfigurationTest(unittest.TestCase):
 
     def test_journal_size_parser_reads_decimal_unit(self) -> None:
         self.assertEqual(parse_journal_size("Archived and active journals take up 990.2M"), 990_200_000)
+
+    def test_permission_limited_journal_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_home = root / "config"
+            config_dir = config_home / "linux-cleanup-service"
+            command_dir = root / "bin"
+            config_dir.mkdir(parents=True)
+            command_dir.mkdir()
+            (config_dir / "environment").write_text("COMMAND_TIMEOUT_SECONDS=5\n", encoding="utf-8")
+            journalctl = command_dir / "journalctl"
+            journalctl.write_text(
+                "#!/bin/sh\nprintf 'No journal files were opened due to insufficient permissions.\\n' >&2\nexit 1\n",
+                encoding="utf-8",
+            )
+            journalctl.chmod(0o755)
+            original = {key: os.environ.get(key) for key in ("PATH", "XDG_CONFIG_HOME")}
+            try:
+                os.environ["PATH"] = f"{command_dir}:{os.environ['PATH']}"
+                os.environ["XDG_CONFIG_HOME"] = str(config_home)
+                skipped: list[str] = []
+                size, error = journal_size(False, load_config(), skipped)
+            finally:
+                for key, value in original.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertIsNone(size)
+            self.assertIsNone(error)
+            self.assertEqual(skipped, ["system journal measurement"])
+
+    def test_journal_size_accepts_size_with_permission_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_home = root / "config"
+            config_dir = config_home / "linux-cleanup-service"
+            command_dir = root / "bin"
+            config_dir.mkdir(parents=True)
+            command_dir.mkdir()
+            journalctl = command_dir / "journalctl"
+            journalctl.write_text(
+                "#!/bin/sh\nprintf 'Archived and active journals take up 8M in the file system.\\n'\nprintf 'Hint: insufficient permissions for other users.\\n' >&2\n",
+                encoding="utf-8",
+            )
+            journalctl.chmod(0o755)
+            original = {key: os.environ.get(key) for key in ("PATH", "XDG_CONFIG_HOME")}
+            try:
+                os.environ["PATH"] = f"{command_dir}:{os.environ['PATH']}"
+                os.environ["XDG_CONFIG_HOME"] = str(config_home)
+                skipped: list[str] = []
+                size, error = journal_size(False, load_config(), skipped)
+            finally:
+                for key, value in original.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertEqual(size, 8_000_000)
+            self.assertIsNone(error)
+            self.assertEqual(skipped, [])
 
     def test_journal_config_uses_environment_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

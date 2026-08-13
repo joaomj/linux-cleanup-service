@@ -21,6 +21,29 @@ from config import ConfigurationError, Config, format_bytes, load_config
 from sqlite_backup import backup_database
 
 
+PERMISSION_MARKERS = (
+    "permission denied",
+    "insufficient permissions",
+    "operation not permitted",
+    "not authorized",
+    "access denied",
+    "a password is required",
+    "unable to open database file",
+)
+
+
+def permission_limited(message: str) -> bool:
+    """Return whether an operation was unavailable to this account."""
+    normalized = message.lower()
+    return any(marker in normalized for marker in PERMISSION_MARKERS)
+
+
+def mark_skipped(skipped: list[str], task: str) -> None:
+    """Record a task that the account could not inspect or execute."""
+    if task not in skipped:
+        skipped.append(task)
+
+
 @contextmanager
 def cleanup_lock(config: Config) -> Iterator[bool]:
     """Acquire a non-blocking process lock for the cleanup run."""
@@ -83,9 +106,16 @@ def measure_path(path: Path) -> int:
     return sum(measure_path(child) for child in path.iterdir())
 
 
-def database_size(config: Config) -> int:
+def database_size(config: Config, skipped: list[str] | None = None) -> int:
     """Measure the OpenCode database and its SQLite sidecar files."""
-    return sum(measure_path(Path(f"{config.opencode_db}{suffix}")) for suffix in ("", "-wal", "-shm"))
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            total += measure_path(Path(f"{config.opencode_db}{suffix}"))
+        except PermissionError:
+            if skipped is not None:
+                mark_skipped(skipped, "OpenCode database size")
+    return total
 
 
 def process_is_running(names: set[str]) -> bool:
@@ -154,7 +184,9 @@ def remove_temp_workspace(path: Path, config: Config) -> None:
     shutil.rmtree(path)
 
 
-def clean_temp_workspaces(config: Config, now: datetime, dry_run: bool, warnings: list[str]) -> dict[str, int]:
+def clean_temp_workspaces(
+    config: Config, now: datetime, dry_run: bool, warnings: list[str], skipped: list[str]
+) -> dict[str, int]:
     """Remove inactive, user-owned temporary workspaces after the retention period."""
     result = {
         "temp_candidates": 0,
@@ -165,15 +197,22 @@ def clean_temp_workspaces(config: Config, now: datetime, dry_run: bool, warnings
         "temp_skipped_unsafe": 0,
     }
     root = config.temp_root
-    if not root.exists():
-        return result
-    if root.is_symlink() or not root.is_dir():
-        warnings.append(f"temporary root is not a real directory: {root}")
+    try:
+        if not root.exists():
+            return result
+        if root.is_symlink() or not root.is_dir():
+            warnings.append(f"temporary root is not a real directory: {root}")
+            return result
+    except PermissionError:
+        mark_skipped(skipped, "temporary workspace inspection")
         return result
 
     try:
         root_device = root.stat().st_dev
         entries = sorted(root.iterdir(), key=lambda item: item.name)
+    except PermissionError:
+        mark_skipped(skipped, "temporary workspace inspection")
+        return result
     except OSError as error:
         warnings.append(f"temporary root could not be inspected: {error}")
         return result
@@ -207,6 +246,8 @@ def clean_temp_workspaces(config: Config, now: datetime, dry_run: bool, warnings
             remove_temp_workspace(entry, config)
             result["temp_deleted"] += 1
             result["temp_deleted_bytes"] += size
+        except PermissionError:
+            mark_skipped(skipped, "temporary workspace cleanup")
         except (OSError, RuntimeError) as error:
             warnings.append(f"temporary workspace cleanup failed for {entry}: {error}")
     return result
@@ -281,21 +322,31 @@ def parse_journal_size(output: str) -> int | None:
     return None
 
 
-def journal_size(user: bool, config: Config) -> tuple[int | None, str | None]:
+def journal_size(user: bool, config: Config, skipped: list[str]) -> tuple[int | None, str | None]:
     """Read system or user journal usage."""
+    scope = "user" if user else "system"
     command = ["journalctl"]
     if user:
         command.append("--user")
     command.append("--disk-usage")
     code, stdout, stderr = run_command(command, config)
     if code != 0:
+        if permission_limited(stderr or stdout):
+            mark_skipped(skipped, f"{scope} journal measurement")
+            return None, None
         return None, stderr or "journalctl failed"
     size = parse_journal_size(stdout)
+    if size is None and permission_limited(stderr):
+        mark_skipped(skipped, f"{scope} journal measurement")
+        return None, None
     return size, None if size is not None else "journalctl returned no size"
 
 
-def vacuum_journal(user: bool, config: Config, current_size: int | None, warnings: list[str]) -> int | None:
+def vacuum_journal(
+    user: bool, config: Config, current_size: int | None, warnings: list[str], skipped: list[str]
+) -> int | None:
     """Vacuum an oversized journal without prompting for credentials."""
+    scope = "user" if user else "system"
     if current_size is None or current_size <= config.journal_warn_size:
         return current_size
     command_prefix = ["journalctl", "--user"] if user else ["sudo", "-n", "journalctl"]
@@ -305,10 +356,12 @@ def vacuum_journal(user: bool, config: Config, current_size: int | None, warning
     ):
         code, _, stderr = run_command(command, config)
         if code != 0:
-            scope = "user" if user else "system"
+            if permission_limited(stderr):
+                mark_skipped(skipped, f"{scope} journal vacuum")
+                return current_size
             warnings.append(f"{scope} journal vacuum failed: {stderr or 'permission denied'}")
             return current_size
-    size, error = journal_size(user, config)
+    size, error = journal_size(user, config, skipped)
     if error:
         warnings.append(error)
     return size
@@ -322,23 +375,26 @@ def opencode_version(config: Config) -> str | None:
     return stdout.splitlines()[-1] if code == 0 and stdout else None
 
 
-def upgrade_opencode(config: Config, warnings: list[str], dry_run: bool) -> str | None:
+def upgrade_opencode(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> str | None:
     """Upgrade OpenCode with its detected standalone installer."""
     before = opencode_version(config)
     if not config.opencode_upgrade_enabled or dry_run:
         return before
     if not config.opencode_command.exists():
-        warnings.append("OpenCode command was not found")
+        mark_skipped(skipped, "OpenCode upgrade")
         return before
     code, _, stderr = run_command(
         [str(config.opencode_command), "upgrade", "--method", config.opencode_upgrade_method], config
     )
     if code != 0:
+        if permission_limited(stderr):
+            mark_skipped(skipped, "OpenCode upgrade")
+            return opencode_version(config) or before
         warnings.append(f"OpenCode upgrade failed: {stderr or 'unknown error'}")
     return opencode_version(config) or before
 
 
-def update_apt(config: Config, warnings: list[str], dry_run: bool) -> str:
+def update_apt(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> str:
     """Refresh APT package lists and install available upgrades."""
     if not config.apt_updates_enabled:
         return "disabled"
@@ -346,24 +402,30 @@ def update_apt(config: Config, warnings: list[str], dry_run: bool) -> str:
         return "dry-run"
     apt_get = shutil.which("apt-get")
     if apt_get is None:
-        warnings.append("APT updates skipped because apt-get is not installed")
+        mark_skipped(skipped, "APT updates")
         return "unavailable"
     sudo = shutil.which("sudo")
     if sudo is None:
-        warnings.append("APT updates failed because sudo is not installed")
-        return "failed"
+        mark_skipped(skipped, "APT updates")
+        return "unavailable"
     code, stdout, stderr = run_command([sudo, "-n", apt_get, "update"], config)
     if code != 0:
+        if permission_limited(stderr or stdout):
+            mark_skipped(skipped, "APT updates")
+            return "skipped"
         warnings.append(f"APT package list update failed: {stderr or stdout or 'unknown error'}")
         return "failed"
     code, stdout, stderr = run_command([sudo, "-n", apt_get, "upgrade", "-y"], config)
     if code != 0:
+        if permission_limited(stderr or stdout):
+            mark_skipped(skipped, "APT updates")
+            return "skipped"
         warnings.append(f"APT package upgrade failed: {stderr or stdout or 'unknown error'}")
         return "failed"
     return "updated"
 
 
-def update_snap(config: Config, warnings: list[str], dry_run: bool) -> str:
+def update_snap(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> str:
     """Refresh installed Snap packages."""
     if not config.snap_updates_enabled:
         return "disabled"
@@ -371,36 +433,55 @@ def update_snap(config: Config, warnings: list[str], dry_run: bool) -> str:
         return "dry-run"
     snap = shutil.which("snap")
     if snap is None:
-        warnings.append("Snap updates skipped because snap is not installed")
+        mark_skipped(skipped, "Snap updates")
         return "unavailable"
     sudo = shutil.which("sudo")
     if sudo is None:
-        warnings.append("Snap updates failed because sudo is not installed")
-        return "failed"
+        mark_skipped(skipped, "Snap updates")
+        return "unavailable"
     code, stdout, stderr = run_command([sudo, "-n", snap, "refresh"], config)
     if code != 0:
+        if permission_limited(stderr or stdout):
+            mark_skipped(skipped, "Snap updates")
+            return "skipped"
         warnings.append(f"Snap refresh failed: {stderr or stdout or 'unknown error'}")
         return "failed"
     return "updated"
 
 
-def prune_uv_cache(config: Config, warnings: list[str], dry_run: bool) -> int:
+def prune_uv_cache(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> int:
     """Prune unreferenced UV cache files above the configured threshold."""
     uv = shutil.which("uv")
     if uv is None:
+        mark_skipped(skipped, "UV cache prune")
         return 0
-    size = measure_path(config.uv_cache)
+    try:
+        size = measure_path(config.uv_cache)
+    except PermissionError:
+        mark_skipped(skipped, "UV cache prune")
+        return 0
     if size <= config.uv_cache_max_size or dry_run:
         return size
     code, _, stderr = run_command([uv, "cache", "prune"], config)
     if code != 0:
+        if permission_limited(stderr):
+            mark_skipped(skipped, "UV cache prune")
+            return size
         warnings.append(f"UV cache prune failed: {stderr or 'unknown error'}")
-    return measure_path(config.uv_cache)
+    try:
+        return measure_path(config.uv_cache)
+    except PermissionError:
+        mark_skipped(skipped, "UV cache measurement")
+        return size
 
 
-def manage_brave_cache(config: Config, warnings: list[str], dry_run: bool) -> int:
+def manage_brave_cache(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> int:
     """Clear Brave cache only when Brave is stopped."""
-    size = measure_path(config.brave_cache)
+    try:
+        size = measure_path(config.brave_cache)
+    except PermissionError:
+        mark_skipped(skipped, "Brave cache")
+        return 0
     if size <= config.brave_cache_max_size or dry_run:
         return size
     if process_is_running({"brave", "brave-browser", "brave-browser-stable"}):
@@ -411,38 +492,50 @@ def manage_brave_cache(config: Config, warnings: list[str], dry_run: bool) -> in
             config.brave_cache,
             lambda: process_is_running({"brave", "brave-browser", "brave-browser-stable"}),
         )
+    except PermissionError:
+        mark_skipped(skipped, "Brave cache cleanup")
     except (OSError, RuntimeError) as error:
         warnings.append(f"Brave cache cleanup failed: {error}")
-    return measure_path(config.brave_cache)
+    try:
+        return measure_path(config.brave_cache)
+    except PermissionError:
+        mark_skipped(skipped, "Brave cache measurement")
+        return size
 
 
-def clean_logs(config: Config, now: datetime, dry_run: bool) -> int:
+def clean_logs(config: Config, now: datetime, dry_run: bool, skipped: list[str]) -> int:
     """Remove old OpenCode log files."""
     if dry_run or not config.opencode_log_dir.is_dir():
         return 0
     cutoff = now - timedelta(days=config.opencode_log_retention_days)
     removed = 0
-    for log_file in config.opencode_log_dir.glob("*.log"):
-        if log_file.is_file() and datetime.fromtimestamp(log_file.stat().st_mtime, tz=now.tzinfo) < cutoff:
-            log_file.unlink()
-            removed += 1
+    try:
+        for log_file in config.opencode_log_dir.glob("*.log"):
+            if log_file.is_file() and datetime.fromtimestamp(log_file.stat().st_mtime, tz=now.tzinfo) < cutoff:
+                log_file.unlink()
+                removed += 1
+    except PermissionError:
+        mark_skipped(skipped, "OpenCode log cleanup")
     return removed
 
 
-def clean_session_diffs(config: Config, deleted_ids: set[str], dry_run: bool) -> int:
+def clean_session_diffs(config: Config, deleted_ids: set[str], dry_run: bool, skipped: list[str]) -> int:
     """Remove diff files that belong to successfully deleted sessions."""
     if dry_run or not config.session_diff_dir.is_dir():
         return 0
     removed = 0
-    for session_id in deleted_ids:
-        candidate = config.session_diff_dir / f"{session_id}.json"
-        if candidate.is_file() and not candidate.is_symlink():
-            candidate.unlink()
-            removed += 1
+    try:
+        for session_id in deleted_ids:
+            candidate = config.session_diff_dir / f"{session_id}.json"
+            if candidate.is_file() and not candidate.is_symlink():
+                candidate.unlink()
+                removed += 1
+    except PermissionError:
+        mark_skipped(skipped, "OpenCode session diff cleanup")
     return removed
 
 
-def checkpoint_database(config: Config, warnings: list[str]) -> None:
+def checkpoint_database(config: Config, warnings: list[str], skipped: list[str]) -> None:
     """Checkpoint the WAL after session removal."""
     if not config.opencode_db.is_file():
         return
@@ -451,11 +544,16 @@ def checkpoint_database(config: Config, warnings: list[str]) -> None:
         connection.execute(f"PRAGMA busy_timeout={config.sqlite_busy_timeout_seconds * 1000}")
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         connection.close()
+    except PermissionError:
+        mark_skipped(skipped, "SQLite WAL checkpoint")
     except sqlite3.Error as error:
+        if permission_limited(str(error)):
+            mark_skipped(skipped, "SQLite WAL checkpoint")
+            return
         warnings.append(f"SQLite WAL checkpoint failed: {error}")
 
 
-def maybe_vacuum(config: Config, warnings: list[str], dry_run: bool) -> None:
+def maybe_vacuum(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> None:
     """Reclaim SQLite free pages only when OpenCode is not running."""
     if dry_run or not config.opencode_db.is_file() or process_is_running({"opencode"}):
         if not dry_run and process_is_running({"opencode"}):
@@ -470,7 +568,12 @@ def maybe_vacuum(config: Config, warnings: list[str], dry_run: bool) -> None:
             return
         connection.execute("VACUUM")
         connection.close()
+    except PermissionError:
+        mark_skipped(skipped, "SQLite vacuum")
     except sqlite3.Error as error:
+        if permission_limited(str(error)):
+            mark_skipped(skipped, "SQLite vacuum")
+            return
         warnings.append(f"SQLite VACUUM failed: {error}")
 
 
@@ -485,28 +588,34 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
         "attempt_date": now.date().isoformat(),
         "warnings": warnings,
         "errors": errors,
+        "skipped": [],
         "deleted_roots": 0,
         "deleted_sessions": 0,
         "backup_bytes": 0,
         "dry_run": dry_run,
     }
-    result.update(clean_temp_workspaces(config, now, dry_run, warnings))
-    result["apt_updates"] = update_apt(config, warnings, dry_run)
-    result["snap_updates"] = update_snap(config, warnings, dry_run)
-    result["opencode_version"] = upgrade_opencode(config, warnings, dry_run)
-    result["uv_cache_bytes"] = prune_uv_cache(config, warnings, dry_run)
-    result["brave_cache_bytes"] = manage_brave_cache(config, warnings, dry_run)
-    result["npm_cache_bytes"] = measure_path(config.npm_cache)
+    skipped = result["skipped"]
+    result.update(clean_temp_workspaces(config, now, dry_run, warnings, skipped))
+    result["apt_updates"] = update_apt(config, warnings, skipped, dry_run)
+    result["snap_updates"] = update_snap(config, warnings, skipped, dry_run)
+    result["opencode_version"] = upgrade_opencode(config, warnings, skipped, dry_run)
+    result["uv_cache_bytes"] = prune_uv_cache(config, warnings, skipped, dry_run)
+    result["brave_cache_bytes"] = manage_brave_cache(config, warnings, skipped, dry_run)
+    try:
+        result["npm_cache_bytes"] = measure_path(config.npm_cache)
+    except PermissionError:
+        mark_skipped(skipped, "npm cache measurement")
+        result["npm_cache_bytes"] = 0
     if result["npm_cache_bytes"] > config.npm_cache_warn_size:
         warnings.append(f"npm cache exceeds {format_bytes(config.npm_cache_warn_size)}")
-    system_size, system_error = journal_size(False, config)
-    user_size, user_error = journal_size(True, config)
+    system_size, system_error = journal_size(False, config, skipped)
+    user_size, user_error = journal_size(True, config, skipped)
     if system_error:
         warnings.append(f"system journal measurement failed: {system_error}")
     if user_error:
         warnings.append(f"user journal measurement failed: {user_error}")
-    system_size = vacuum_journal(False, config, system_size, warnings)
-    user_size = vacuum_journal(True, config, user_size, warnings)
+    system_size = vacuum_journal(False, config, system_size, warnings, skipped)
+    user_size = vacuum_journal(True, config, user_size, warnings, skipped)
     if system_size is not None:
         result["system_journal_bytes"] = system_size
         if system_size > config.journal_warn_size:
@@ -520,19 +629,29 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
     try:
         candidates = stale_roots(config, cutoff_ms)
     except sqlite3.Error as error:
-        candidates = []
-        errors.append(f"could not inspect OpenCode sessions: {error}")
+        if permission_limited(str(error)):
+            mark_skipped(skipped, "OpenCode session inspection")
+            candidates = []
+        else:
+            candidates = []
+            errors.append(f"could not inspect OpenCode sessions: {error}")
     result["candidate_roots"] = len(candidates)
     result["candidate_sessions"] = sum(int(item["session_count"]) for item in candidates)
     deleted_ids: set[str] = set()
+    backup_ready = not candidates or dry_run
     if candidates and not dry_run and not errors:
         try:
             backup = backup_database(config, now)
             result["backup_path"] = str(backup)
             result["backup_bytes"] = measure_path(backup)
+            backup_ready = True
         except (OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
-            errors.append(f"database backup failed; no sessions deleted: {error}")
-    if candidates and not dry_run and not errors:
+            if permission_limited(str(error)):
+                mark_skipped(skipped, "OpenCode database backup")
+                backup_ready = False
+            else:
+                errors.append(f"database backup failed; no sessions deleted: {error}")
+    if candidates and not dry_run and not errors and backup_ready:
         for candidate in candidates:
             root_id = str(candidate["root_id"])
             if session_exists(config, root_id):
@@ -540,6 +659,9 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
                     [str(config.opencode_command), "--pure", "session", "delete", root_id], config, config.home
                 )
                 if code != 0:
+                    if permission_limited(stderr):
+                        mark_skipped(skipped, "OpenCode session deletion")
+                        continue
                     errors.append(f"session deletion failed for {root_id}: {stderr or 'unknown error'}")
                     continue
             if session_exists(config, root_id):
@@ -549,12 +671,12 @@ def execute(config: Config, dry_run: bool) -> dict[str, Any]:
             deleted_ids.update(str(session_id) for session_id in candidate["session_ids"])
             result["deleted_roots"] += 1
             result["deleted_sessions"] += int(candidate["session_count"])
-    clean_session_diffs(config, deleted_ids, dry_run)
-    clean_logs(config, now, dry_run)
+    clean_session_diffs(config, deleted_ids, dry_run, skipped)
+    clean_logs(config, now, dry_run, skipped)
     if deleted_ids and not dry_run:
-        checkpoint_database(config, warnings)
-        maybe_vacuum(config, warnings, dry_run)
-    result["db_bytes"] = database_size(config)
+        checkpoint_database(config, warnings, skipped)
+        maybe_vacuum(config, warnings, skipped, dry_run)
+    result["db_bytes"] = database_size(config, skipped)
     if result["db_bytes"] > config.opencode_db_warn_size:
         warnings.append(f"OpenCode database exceeds {format_bytes(config.opencode_db_warn_size)}")
     result["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
