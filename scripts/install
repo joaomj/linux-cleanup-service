@@ -34,17 +34,21 @@ install -m 755 "$ROOT_DIR/shell/bashrc-init.sh" "$LIBEXEC_DIR/bashrc-init.sh"
 
 systemctl --user daemon-reload
 
-if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+if command -v sudo >/dev/null 2>&1; then
     JOURNAL_TMP="$(mktemp)"
-    trap 'rm -f "$JOURNAL_TMP"' EXIT
+    SUDOERS_TMP="$(mktemp)"
+    trap 'rm -f "$JOURNAL_TMP" "$SUDOERS_TMP"' EXIT
     /usr/bin/python3 "$ROOT_DIR/src/config.py" journal-config > "$JOURNAL_TMP"
     JOURNAL_VACUUM_SIZE="$(/usr/bin/python3 "$ROOT_DIR/src/config.py" journal-vacuum-size)"
+    /usr/bin/python3 "$ROOT_DIR/src/config.py" sudoers-config > "$SUDOERS_TMP"
+    visudo -cf "$SUDOERS_TMP"
     sudo install -D -m 644 "$JOURNAL_TMP" /etc/systemd/journald.conf.d/90-linux-cleanup-service.conf
+    sudo install -D -m 440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/90-linux-cleanup-service
     sudo systemctl restart systemd-journald
     sudo journalctl --rotate
     sudo journalctl --vacuum-size="$JOURNAL_VACUUM_SIZE"
 else
-    printf 'User files installed. Run the root journal command from README.md to apply the journal limit.\n'
+    printf 'User files installed. Apply the root commands from README.md manually.\n'
 fi
 
 printf 'Installed linux-cleanup-service. Open a new Bash shell to start the daily job.\n'

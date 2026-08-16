@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Black-box checks for configuration parsing and journal output."""
+"""Black-box checks for configuration parsing and root drop-in output."""
 
 from __future__ import annotations
 
@@ -130,6 +130,30 @@ class ConfigurationTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("SystemMaxUse=70M", result.stdout)
             self.assertIn("RuntimeMaxUse=12M", result.stdout)
+
+    def test_sudoers_config_lists_exact_service_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = temp_dir
+            config_dir = Path(temp_dir) / "linux-cleanup-service"
+            config_dir.mkdir()
+            (config_dir / "environment").write_text(
+                "JOURNAL_SYSTEM_MAX_USE=70M\n", encoding="utf-8"
+            )
+            result = subprocess.run(
+                [sys.executable, str(SRC / "config.py"), "sudoers-config"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("ALL=(root) NOPASSWD:", result.stdout)
+            self.assertIn("/usr/bin/apt-get update", result.stdout)
+            self.assertIn("/usr/bin/apt-get upgrade -y", result.stdout)
+            self.assertIn('snap refresh ""', result.stdout)
+            self.assertIn("/usr/bin/journalctl --rotate", result.stdout)
+            self.assertIn("/usr/bin/journalctl --vacuum-size=70M", result.stdout)
 
 
 if __name__ == "__main__":

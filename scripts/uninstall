@@ -13,6 +13,7 @@ if [ -f "$BASHRC" ]; then
 fi
 
 if command -v sudo >/dev/null 2>&1; then
+    sudo rm -f /etc/sudoers.d/90-linux-cleanup-service
     sudo rm -f /etc/systemd/journald.conf.d/90-linux-cleanup-service.conf
     sudo systemctl restart systemd-journald
 fi

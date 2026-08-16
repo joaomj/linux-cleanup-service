@@ -21,3 +21,10 @@ and retries on the next daily run.
 Do not enforce a SQLite page limit. A hard limit can make OpenCode fail with a
 disk-full error. The service reports the condition and keeps the seven-day
 retention rule.
+
+## Use Scoped Passwordless Sudo
+
+Grant the service passwordless root access only to the exact commands it runs:
+`apt-get update`, `apt-get upgrade -y`, `snap refresh`, and `journalctl`
+rotate and vacuum. The sudoers drop-in names the user and the exact command
+lines, so the daily job runs unattended without opening a general shell.

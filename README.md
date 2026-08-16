@@ -21,10 +21,13 @@ The installer:
 - Adds a small startup hook to `~/.bashrc`.
 - Creates `~/.config/linux-cleanup-service/environment`.
 - Installs a root journald drop-in with `sudo`.
+- Installs a root sudoers drop-in that allows the daily update commands without
+  a password.
 - Rotates and vacuums existing system journal files.
 
-Open a new Bash shell after installation. The first shell starts the job in the
-background. The shell prints the last result.
+The installer asks for the sudo password when it needs it. Open a new Bash
+shell after installation. The first shell starts the job in the background.
+The shell prints the last result.
 
 ## Configuration
 
@@ -71,8 +74,33 @@ The service performs these actions once per calendar day:
 12. Rotate OpenCode backups and logs.
 13. Measure system and user journal usage.
 
-APT and Snap updates use non-interactive `sudo`. If `sudo` needs a password,
-the service records a warning and continues the remaining cleanup.
+APT and Snap updates use non-interactive `sudo`. The installer creates the
+root file `/etc/sudoers.d/90-linux-cleanup-service`, which allows exactly
+these commands and the system journal rotate and vacuum operations without a
+password. If `sudo` still needs a password, the service records a warning and
+continues the remaining cleanup.
+
+## Passwordless Updates
+
+Regenerate or inspect the sudoers rule:
+
+```bash
+python3 ~/.local/libexec/linux-cleanup-service/config.py sudoers-config
+```
+
+If the installer could not use `sudo`, apply the rule manually:
+
+```bash
+tmp="$(mktemp)"
+python3 "$HOME/.local/libexec/linux-cleanup-service/config.py" sudoers-config > "$tmp"
+sudo install -D -m 440 -o root -g root "$tmp" /etc/sudoers.d/90-linux-cleanup-service
+rm -f "$tmp"
+```
+
+The rule names the current user and grants no shell. It covers only
+`apt-get update`, `apt-get upgrade -y`, `snap refresh`, `journalctl --rotate`,
+and `journalctl --vacuum-size=<limit>`. Regenerate the rule after changing
+`JOURNAL_SYSTEM_MAX_USE`, because the vacuum size is part of the command.
 
 Account-level runs skip tasks and metrics that the account cannot inspect or
 execute, such as system journal details or root-only package updates. These

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import sys
@@ -227,10 +228,28 @@ def print_journal_vacuum_size() -> None:
     print(load_config().journal_system_max_use)
 
 
+def print_sudoers_config() -> None:
+    """Print the passwordless sudo drop-in for the daily service commands."""
+    config = load_config()
+    commands = (
+        "/usr/bin/apt-get update",
+        "/usr/bin/apt-get upgrade -y",
+        '/usr/bin/snap refresh ""',
+        "/usr/bin/journalctl --rotate",
+        f"/usr/bin/journalctl --vacuum-size={config.journal_system_max_use}",
+    )
+    lines = [f"{getpass.getuser()} ALL=(root) NOPASSWD: {commands[0]}"]
+    lines.extend(f"    {command}" for command in commands[1:])
+    print("# linux-cleanup-service: allow non-interactive daily maintenance commands")
+    print(",\\\n".join(lines))
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "journal-config":
         print_journal_config()
     elif len(sys.argv) == 2 and sys.argv[1] == "journal-vacuum-size":
         print_journal_vacuum_size()
+    elif len(sys.argv) == 2 and sys.argv[1] == "sudoers-config":
+        print_sudoers_config()
     else:
         print(format_bytes(load_config().opencode_db_warn_size))

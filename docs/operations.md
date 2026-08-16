@@ -37,9 +37,20 @@ sudo -n snap refresh
 ```
 
 The service runs the APT upgrade only after the package-list update succeeds.
-If an update fails, the service records a warning and continues its cleanup.
-The service does not ask for a password. Configure `sudo` for non-interactive
-use or set `APT_UPDATES_ENABLED=false` or `SNAP_UPDATES_ENABLED=false`.
+The installer creates the root file `/etc/sudoers.d/90-linux-cleanup-service`.
+The file allows only these commands and the system journal rotate and vacuum
+operations without a password. If an update still fails, the service records a
+warning and continues its cleanup. The service does not ask for a password.
+
+Inspect the current rule:
+
+```bash
+python3 ~/.local/libexec/linux-cleanup-service/config.py sudoers-config
+```
+
+Regenerate and reinstall the rule after changing `JOURNAL_SYSTEM_MAX_USE`,
+because the vacuum size is part of the allowed command. To stop all updates,
+set `APT_UPDATES_ENABLED=false` or `SNAP_UPDATES_ENABLED=false`.
 
 ## Retry After a Failure
 
