@@ -6,6 +6,11 @@ The service loads defaults from `src/config.py` and then reads:
 ~/.config/linux-cleanup-service/environment
 ```
 
+On macOS the environment file is
+`~/Library/Application Support/macos-cleanup-service/environment`, and the
+installer seeds it from `config/macos.env`. Journal settings do not apply on
+macOS because it has no systemd journal.
+
 Process environment variables override file values. The file uses simple
 `KEY=VALUE` lines. It does not run shell code.
 

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from config import ConfigurationError, format_bytes, load_config, parse_size
+from config import SERVICE_NAME, ConfigurationError, format_bytes, load_config, parse_size
 from cleanup import journal_size, parse_journal_size
 
 
@@ -115,7 +115,7 @@ class ConfigurationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             env = os.environ.copy()
             env["XDG_CONFIG_HOME"] = temp_dir
-            config_dir = Path(temp_dir) / "linux-cleanup-service"
+            config_dir = Path(temp_dir) / SERVICE_NAME
             config_dir.mkdir()
             (config_dir / "environment").write_text(
                 "JOURNAL_SYSTEM_MAX_USE=70M\nJOURNAL_RUNTIME_MAX_USE=12M\n", encoding="utf-8"
