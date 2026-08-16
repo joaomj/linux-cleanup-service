@@ -38,3 +38,15 @@ Verify the commit status on GitHub:
 ```bash
   --jq '.commit.verification'
 ```
+
+## Run the Tests
+
+The repository uses `uv` for its development environment. Run the full suite:
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+The tests use only the Python standard library. The `pyproject.toml` file
+declares the project as a non-package so `uv run` does not build or install
+the service code.
