@@ -32,6 +32,11 @@ The installer asks for the sudo password when it needs it. Open a new Bash
 shell after installation. The first shell starts the job in the background.
 The shell prints the last result.
 
+On macOS the installer instead installs the launchd job
+`com.user.macos-cleanup-service`, adds the hook to `~/.zshrc`, and creates
+`~/Library/Application Support/macos-cleanup-service/environment` from
+`config/macos.env`. It skips the journal and sudoers drop-ins.
+
 ## Configuration
 
 Edit:

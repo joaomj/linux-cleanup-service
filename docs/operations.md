@@ -8,10 +8,22 @@ Run:
 python3 ~/.local/libexec/linux-cleanup-service/status.py --json
 ```
 
-View service logs:
+On macOS:
+
+```bash
+python3 ~/.local/libexec/macos-cleanup-service/status.py --json
+```
+
+View Linux service logs:
 
 ```bash
 journalctl --user -u linux-cleanup.service
+```
+
+On macOS the launchd job writes logs into the state directory:
+
+```bash
+cat "$HOME/Library/Application Support/macos-cleanup-service/launchd-stderr.log"
 ```
 
 ## Test Without Changes
@@ -22,11 +34,14 @@ Run:
 python3 ~/.local/libexec/linux-cleanup-service/cleanup.py --dry-run --force
 ```
 
+On macOS, replace the path with
+`~/.local/libexec/macos-cleanup-service/cleanup.py`.
+
 The dry run measures current state and finds stale sessions. It does not update
 APT, Snap, or OpenCode. It does not prune UV, clear Brave, create backups,
 delete sessions, or vacuum SQLite.
 
-## System Updates
+## System Updates (Linux)
 
 The daily run uses these commands:
 
@@ -52,6 +67,9 @@ Regenerate and reinstall the rule after changing `JOURNAL_SYSTEM_MAX_USE`,
 because the vacuum size is part of the allowed command. To stop all updates,
 set `APT_UPDATES_ENABLED=false` or `SNAP_UPDATES_ENABLED=false`.
 
+macOS has no APT or Snap package managers. The service skips these actions
+there.
+
 ## Retry After a Failure
 
 Inspect the status and service log first. Fix the reported cause, then run:
@@ -59,6 +77,12 @@ Inspect the status and service log first. Fix the reported cause, then run:
 ```bash
 systemctl --user reset-failed linux-cleanup.service
 systemctl --user start linux-cleanup.service
+```
+
+On macOS:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.user.macos-cleanup-service"
 ```
 
 The service is safe to retry. It creates a new backup before another deletion
@@ -77,6 +101,12 @@ Backups are stored in:
 ~/.local/state/linux-cleanup-service/backups/
 ```
 
+On macOS:
+
+```text
+~/Library/Application Support/macos-cleanup-service/backups/
+```
+
 They use `zstd` compression and mode `0600`. The service retains the newest
 valid backup when the aggregate size target cannot be met.
 
@@ -89,4 +119,10 @@ $EDITOR ~/.config/linux-cleanup-service/environment
 python3 ~/.local/libexec/linux-cleanup-service/cleanup.py --dry-run --force
 ```
 
-Open a new shell or restart the user unit after configuration changes.
+On macOS the environment file is:
+
+```text
+~/Library/Application Support/macos-cleanup-service/environment
+```
+
+Open a new shell or restart the service unit after configuration changes.
