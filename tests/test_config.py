@@ -151,7 +151,7 @@ class ConfigurationTest(unittest.TestCase):
             self.assertIn("ALL=(root) NOPASSWD:", result.stdout)
             self.assertIn("/usr/bin/apt-get update", result.stdout)
             self.assertIn("/usr/bin/apt-get upgrade -y", result.stdout)
-            self.assertIn('snap refresh ""', result.stdout)
+            self.assertIn("/usr/bin/snap refresh", result.stdout)
             self.assertIn("/usr/bin/journalctl --rotate", result.stdout)
             self.assertIn("/usr/bin/journalctl --vacuum-size=70M", result.stdout)
 

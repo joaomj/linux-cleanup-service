@@ -260,7 +260,7 @@ def print_sudoers_config() -> None:
     commands = (
         "/usr/bin/apt-get update",
         "/usr/bin/apt-get upgrade -y",
-        '/usr/bin/snap refresh ""',
+        "/usr/bin/snap refresh",
         "/usr/bin/journalctl --rotate",
         f"/usr/bin/journalctl --vacuum-size={config.journal_system_max_use}",
     )

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,8 +77,13 @@ def render_shell(config: Config) -> str:
         return f"{SHELL_PREFIX} running | first daily cleanup has started"
     state = str(status.get("status", "unknown"))
     if state == "running" and not service_is_active():
-        state = "failed"
-        status.setdefault("errors", []).append("cleanup stopped before it wrote a final result")
+        for _ in range(10):
+            time.sleep(0.2)
+            if service_is_active():
+                break
+        else:
+            state = "failed"
+            status.setdefault("errors", []).append("cleanup stopped before it wrote a final result")
     parts = [f"{SHELL_PREFIX} {state}"]
     if status.get("finished_at"):
         parts.append(str(status["finished_at"]))
