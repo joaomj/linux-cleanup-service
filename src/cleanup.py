@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -88,8 +89,8 @@ def database_size(config: Config) -> int:
     return sum(measure_path(Path(f"{config.opencode_db}{suffix}")) for suffix in ("", "-wal", "-shm"))
 
 
-def process_is_running(names: set[str]) -> bool:
-    """Check processes owned by this user without matching command arguments."""
+def _process_is_running_linux(names: set[str]) -> bool:
+    """Check processes on Linux via /proc."""
     proc = Path("/proc")
     for entry in proc.iterdir():
         if not entry.name.isdigit():
@@ -110,9 +111,52 @@ def process_is_running(names: set[str]) -> bool:
     return False
 
 
+def _process_is_running_macos(names: set[str]) -> bool:
+    """Check processes on macOS via pgrep."""
+    pgrep = shutil.which("pgrep")
+    if pgrep is None:
+        return False
+    for name in names:
+        try:
+            result = subprocess.run(
+                [pgrep, "-u", str(os.getuid()), "-x", name],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+    return False
+
+
+def process_is_running(names: set[str]) -> bool:
+    """Check processes owned by this user."""
+    if sys.platform == "darwin":
+        return _process_is_running_macos(names)
+    return _process_is_running_linux(names)
+
+
 def process_uses_path(path: Path) -> bool:
     """Return whether a process owned by this user has a handle in a path."""
     root = path.resolve()
+    if sys.platform == "darwin":
+        lsof = shutil.which("lsof")
+        if lsof is None:
+            return True
+        try:
+            result = subprocess.run(
+                [lsof, "-a", "-u", str(os.getuid()), "+D", str(root), "-t"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        return result.returncode == 0 and bool(result.stdout.strip())
     proc = Path("/proc")
     if not proc.is_dir():
         return False
@@ -282,7 +326,9 @@ def parse_journal_size(output: str) -> int | None:
 
 
 def journal_size(user: bool, config: Config) -> tuple[int | None, str | None]:
-    """Read system or user journal usage."""
+    """Read system or user journal usage on Linux."""
+    if sys.platform != "linux":
+        return None, None
     command = ["journalctl"]
     if user:
         command.append("--user")
@@ -295,7 +341,9 @@ def journal_size(user: bool, config: Config) -> tuple[int | None, str | None]:
 
 
 def vacuum_journal(user: bool, config: Config, current_size: int | None, warnings: list[str]) -> int | None:
-    """Vacuum an oversized journal without prompting for credentials."""
+    """Vacuum an oversized journal without prompting for credentials on Linux."""
+    if sys.platform != "linux":
+        return current_size
     if current_size is None or current_size <= config.journal_warn_size:
         return current_size
     command_prefix = ["journalctl", "--user"] if user else ["sudo", "-n", "journalctl"]
@@ -410,22 +458,23 @@ def checkpoint_database(config: Config, warnings: list[str]) -> None:
 
 
 def maybe_vacuum(config: Config, warnings: list[str], dry_run: bool) -> None:
-    """Reclaim SQLite free pages only when OpenCode is not running."""
-    if dry_run or not config.opencode_db.is_file() or process_is_running({"opencode"}):
-        if not dry_run and process_is_running({"opencode"}):
-            warnings.append("SQLite vacuum skipped because OpenCode is running")
+    """Reclaim SQLite free pages when the database has enough free space."""
+    if dry_run or not config.opencode_db.is_file():
         return
+    connection: sqlite3.Connection | None = None
     try:
         connection = sqlite3.connect(config.opencode_db, timeout=config.sqlite_busy_timeout_seconds)
+        connection.execute(f"PRAGMA busy_timeout={config.sqlite_busy_timeout_seconds * 1000}")
         page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
         freelist = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
         if page_size * freelist < config.sqlite_vacuum_min_size:
-            connection.close()
             return
         connection.execute("VACUUM")
-        connection.close()
     except sqlite3.Error as error:
         warnings.append(f"SQLite VACUUM failed: {error}")
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def execute(config: Config, dry_run: bool) -> dict[str, Any]:

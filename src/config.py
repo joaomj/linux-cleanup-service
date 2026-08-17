@@ -25,6 +25,7 @@ SIZE_PATTERN = re.compile(r"^([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
+SERVICE_NAME = "macos-cleanup-service" if sys.platform == "darwin" else "linux-cleanup-service"
 
 
 class ConfigurationError(ValueError):
@@ -146,7 +147,13 @@ class Config:
 def load_config() -> Config:
     """Load defaults, the user environment file, and process overrides."""
     home = Path.home()
-    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")) / "linux-cleanup-service"
+    is_macos = sys.platform == "darwin"
+    if "XDG_CONFIG_HOME" in os.environ:
+        config_dir = Path(os.environ["XDG_CONFIG_HOME"]) / SERVICE_NAME
+    elif is_macos:
+        config_dir = home / "Library" / "Application Support" / SERVICE_NAME
+    else:
+        config_dir = home / ".config" / SERVICE_NAME
     file_values = read_environment(config_dir / "environment")
     values = {**file_values, **os.environ}
 
@@ -160,16 +167,22 @@ def load_config() -> Config:
     if journal_method not in {"curl", "npm", "pnpm", "bun", "brew", "choco", "scoop"}:
         raise ConfigurationError("OPENCODE_UPGRADE_METHOD is not supported")
 
-    state_dir = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")) / "linux-cleanup-service"
+    state_dir = config_dir if is_macos else Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state")) / SERVICE_NAME
     data_dir = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")) / "opencode"
-    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache"))
+    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / "Library" / "Caches" if is_macos else home / ".cache"))
+    raw_backup_dir = _value(values, "OPENCODE_BACKUP_DIR", "")
+    if raw_backup_dir:
+        backup_dir = Path(raw_backup_dir).expanduser()
+    else:
+        legacy_backup_dir = home / "backups" / "opencode"
+        backup_dir = legacy_backup_dir if legacy_backup_dir.is_dir() else state_dir / "backups"
     temp_root = Path(_value(values, "TEMP_ROOT", "/tmp/opencode")).expanduser()
     if not temp_root.is_absolute():
         raise ConfigurationError("TEMP_ROOT must be an absolute path")
     return Config(
         home=home,
         state_dir=state_dir,
-        backup_dir=state_dir / "backups",
+        backup_dir=backup_dir,
         status_path=state_dir / "status.json",
         lock_path=state_dir / "cleanup.lock",
         opencode_command=Path(_value(values, "OPENCODE_COMMAND", str(home / ".opencode" / "bin" / "opencode"))),
@@ -178,7 +191,13 @@ def load_config() -> Config:
         session_diff_dir=Path(_value(values, "OPENCODE_SESSION_DIFF_DIR", str(data_dir / "storage" / "session_diff"))),
         uv_cache=Path(_value(values, "UV_CACHE_PATH", str(cache_dir / "uv"))),
         brave_cache=Path(
-            _value(values, "BRAVE_CACHE_PATH", str(cache_dir / "BraveSoftware" / "Brave-Browser"))
+            _value(
+                values,
+                "BRAVE_CACHE_PATH",
+                str(cache_dir / "BraveSoftware" / "Brave-Browser" / "Default" / "Cache")
+                if is_macos
+                else str(cache_dir / "BraveSoftware" / "Brave-Browser"),
+            )
         ),
         npm_cache=Path(_value(values, "NPM_CACHE_PATH", str(home / ".npm"))),
         temp_root=temp_root,

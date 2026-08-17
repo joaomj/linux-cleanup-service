@@ -7,6 +7,10 @@ The service manages OpenCode session data, the OpenCode update, selected user
 caches, and journal size reporting. It keeps all thresholds in a user
 environment file.
 
+On macOS, the installer uses a launchd user job named
+`com.user.macos-cleanup-service` and stores configuration under
+`~/Library/Application Support/macos-cleanup-service/`.
+
 ## Install
 
 Run:
@@ -15,7 +19,7 @@ Run:
 ./scripts/install
 ```
 
-The installer:
+On Linux, the installer:
 
 - Installs a systemd user service.
 - Adds a small startup hook to `~/.bashrc`.
@@ -23,12 +27,15 @@ The installer:
 - Installs a root journald drop-in with `sudo`.
 - Rotates and vacuums existing system journal files.
 
-Open a new Bash shell after installation. The first shell starts the job in the
+On macOS, it installs the launchd job and a `~/.zshrc` startup hook. It does
+not call `systemctl` or `journalctl`.
+
+Open a new shell after installation. The first shell starts the job in the
 background. The shell prints the last result.
 
 ## Configuration
 
-Edit:
+Edit on Linux:
 
 ```text
 ~/.config/linux-cleanup-service/environment
@@ -49,6 +56,9 @@ OPENCODE_DB_WARN_SIZE=2GiB
 The service reads this file once at the start of each run. Process environment
 variables take precedence over the file.
 
+On macOS, edit
+`~/Library/Application Support/macos-cleanup-service/environment`.
+
 The size parser accepts `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`.
 
 ## Daily Work
@@ -62,7 +72,7 @@ The service performs these actions once per calendar day:
 5. Skip Brave cleanup and report a warning when Brave is running.
 6. Back up the OpenCode database before session deletion.
 7. Delete session trees inactive for seven days.
-8. Checkpoint SQLite and vacuum free pages when safe.
+8. Checkpoint SQLite and vacuum free pages when SQLite allows it.
 9. Rotate OpenCode backups and logs.
 10. Measure system and user journal usage.
 
@@ -93,6 +103,12 @@ Run a manual cleanup outside the daily gate:
 
 ```bash
 systemctl --user start linux-cleanup.service
+```
+
+On macOS, run:
+
+```bash
+launchctl start com.user.macos-cleanup-service
 ```
 
 ## Journal Limit

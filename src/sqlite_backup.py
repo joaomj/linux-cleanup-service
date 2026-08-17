@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -17,7 +18,9 @@ def backup_database(config: Config, now: datetime) -> Path:
     """Create a consistent, compressed SQLite backup and return its path."""
     config.backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     stamp = now.strftime("%Y%m%d-%H%M%S")
-    final_path = config.backup_dir / f"opencode-{stamp}.db.zst"
+    compressor = shutil.which("zstd")
+    suffix = ".db.zst" if compressor else ".db"
+    final_path = config.backup_dir / f"opencode-{stamp}{suffix}"
     with tempfile.TemporaryDirectory(prefix="opencode-backup-", dir=config.backup_dir) as temp_dir:
         raw_path = Path(temp_dir) / "opencode.db"
         source_uri = f"file:{quote(str(config.opencode_db))}?mode=ro"
@@ -33,16 +36,19 @@ def backup_database(config: Config, now: datetime) -> Path:
         finally:
             destination.close()
             source.close()
-        compressed = subprocess.run(
-            ["zstd", "--quiet", "--force", "--rm", str(raw_path), "-o", str(final_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=config.command_timeout_seconds,
-        )
-        if compressed.returncode != 0 or not final_path.is_file():
-            detail = compressed.stderr.strip() or "zstd did not create the backup"
-            raise RuntimeError(f"backup compression failed: {detail}")
+        if compressor is None:
+            raw_path.replace(final_path)
+        else:
+            compressed = subprocess.run(
+                [compressor, "--quiet", "--force", "--rm", str(raw_path), "-o", str(final_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=config.command_timeout_seconds,
+            )
+            if compressed.returncode != 0 or not final_path.is_file():
+                detail = compressed.stderr.strip() or "zstd did not create the backup"
+                raise RuntimeError(f"backup compression failed: {detail}")
     final_path.chmod(0o600)
     rotate_backups(config, now)
     return final_path
@@ -52,7 +58,11 @@ def rotate_backups(config: Config, now: datetime) -> None:
     """Keep recent backups within configured age, count, and size limits."""
     if not config.backup_dir.is_dir():
         return
-    backups = sorted(config.backup_dir.glob("opencode-*.db.zst"), key=lambda path: path.stat().st_mtime, reverse=True)
+    backups = sorted(
+        list(config.backup_dir.glob("opencode-*.db.zst")) + list(config.backup_dir.glob("opencode-*.db")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     cutoff = now - timedelta(days=config.opencode_backup_retention_days)
     retained: list[Path] = []
     for backup in backups:

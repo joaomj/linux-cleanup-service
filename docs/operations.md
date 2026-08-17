@@ -24,7 +24,9 @@ python3 ~/.local/libexec/linux-cleanup-service/cleanup.py --dry-run --force
 
 The dry run measures current state and finds stale sessions. It does not update
 OpenCode, prune UV, clear Brave, create backups, delete sessions, or vacuum
-SQLite.
+SQLite. A normal run attempts SQLite vacuum and waits for the configured busy
+timeout if OpenCode has the database open. It reports a warning if SQLite stays
+busy.
 
 ## Retry After a Failure
 
