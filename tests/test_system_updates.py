@@ -15,7 +15,7 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from cleanup import update_apt, update_snap
-from config import load_config
+from config import SERVICE_NAME, load_config
 
 
 class SystemUpdatesTest(unittest.TestCase):
@@ -62,7 +62,7 @@ printf 'snap %s\\n' "$*" >> "$UPDATE_LOG"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config_home = root / "config"
-            config_dir = config_home / "linux-cleanup-service"
+            config_dir = config_home / SERVICE_NAME
             command_dir = root / "bin"
             log_path = root / "updates.log"
             config_dir.mkdir(parents=True)
@@ -101,7 +101,7 @@ printf 'snap %s\\n' "$*" >> "$UPDATE_LOG"
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config_home = root / "config"
-            config_dir = config_home / "linux-cleanup-service"
+            config_dir = config_home / SERVICE_NAME
             command_dir = root / "bin"
             log_path = root / "updates.log"
             config_dir.mkdir(parents=True)

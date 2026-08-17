@@ -16,7 +16,7 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from cleanup import clean_temp_workspaces
-from config import load_config
+from config import SERVICE_NAME, load_config
 
 
 class TemporaryCleanupTest(unittest.TestCase):
@@ -24,7 +24,7 @@ class TemporaryCleanupTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_home = Path(temp_dir) / "config"
             temp_root = Path(temp_dir) / "opencode"
-            config_dir = config_home / "linux-cleanup-service"
+            config_dir = config_home / SERVICE_NAME
             config_dir.mkdir(parents=True)
             (config_dir / "environment").write_text(
                 f"TEMP_ROOT={temp_root}\nTEMP_RETENTION_DAYS=7\n",

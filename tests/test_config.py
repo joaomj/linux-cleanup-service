@@ -32,7 +32,7 @@ class ConfigurationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             env = os.environ.copy()
             env["XDG_CONFIG_HOME"] = temp_dir
-            config_dir = Path(temp_dir) / "linux-cleanup-service"
+            config_dir = Path(temp_dir) / SERVICE_NAME
             config_dir.mkdir()
             (config_dir / "environment").write_text("TEMP_ROOT=relative\n", encoding="utf-8")
             result = subprocess.run(
@@ -50,11 +50,12 @@ class ConfigurationTest(unittest.TestCase):
     def test_journal_size_parser_reads_decimal_unit(self) -> None:
         self.assertEqual(parse_journal_size("Archived and active journals take up 990.2M"), 990_200_000)
 
+    @unittest.skipUnless(sys.platform == "linux", "journalctl permission behavior is Linux-only")
     def test_permission_limited_journal_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config_home = root / "config"
-            config_dir = config_home / "linux-cleanup-service"
+            config_dir = config_home / SERVICE_NAME
             command_dir = root / "bin"
             config_dir.mkdir(parents=True)
             command_dir.mkdir()
@@ -81,11 +82,12 @@ class ConfigurationTest(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual(skipped, ["system journal measurement"])
 
+    @unittest.skipUnless(sys.platform == "linux", "journalctl permission behavior is Linux-only")
     def test_journal_size_accepts_size_with_permission_hint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config_home = root / "config"
-            config_dir = config_home / "linux-cleanup-service"
+            config_dir = config_home / SERVICE_NAME
             command_dir = root / "bin"
             config_dir.mkdir(parents=True)
             command_dir.mkdir()
@@ -135,7 +137,7 @@ class ConfigurationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             env = os.environ.copy()
             env["XDG_CONFIG_HOME"] = temp_dir
-            config_dir = Path(temp_dir) / "linux-cleanup-service"
+            config_dir = Path(temp_dir) / SERVICE_NAME
             config_dir.mkdir()
             (config_dir / "environment").write_text(
                 "JOURNAL_SYSTEM_MAX_USE=70M\n", encoding="utf-8"

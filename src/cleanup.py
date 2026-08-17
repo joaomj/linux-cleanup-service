@@ -171,6 +171,21 @@ def process_is_running(names: set[str]) -> bool:
 def process_uses_path(path: Path) -> bool:
     """Return whether a process owned by this user has a handle in a path."""
     root = path.resolve()
+    if sys.platform == "darwin":
+        lsof = shutil.which("lsof")
+        if lsof is None:
+            return True
+        try:
+            result = subprocess.run(
+                [lsof, "-a", "-u", str(os.getuid()), "+D", str(root), "-t"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        return result.returncode == 0 and bool(result.stdout.strip())
     proc = Path("/proc")
     if not proc.is_dir():
         return False
@@ -586,20 +601,18 @@ def checkpoint_database(config: Config, warnings: list[str], skipped: list[str])
 
 
 def maybe_vacuum(config: Config, warnings: list[str], skipped: list[str], dry_run: bool) -> None:
-    """Reclaim SQLite free pages only when OpenCode is not running."""
-    if dry_run or not config.opencode_db.is_file() or process_is_running({"opencode"}):
-        if not dry_run and process_is_running({"opencode"}):
-            warnings.append("SQLite vacuum skipped because OpenCode is running")
+    """Reclaim SQLite free pages when the database has enough free space."""
+    if dry_run or not config.opencode_db.is_file():
         return
+    connection: sqlite3.Connection | None = None
     try:
         connection = sqlite3.connect(config.opencode_db, timeout=config.sqlite_busy_timeout_seconds)
+        connection.execute(f"PRAGMA busy_timeout={config.sqlite_busy_timeout_seconds * 1000}")
         page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
         freelist = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
         if page_size * freelist < config.sqlite_vacuum_min_size:
-            connection.close()
             return
         connection.execute("VACUUM")
-        connection.close()
     except PermissionError:
         mark_skipped(skipped, "SQLite vacuum")
     except sqlite3.Error as error:
@@ -607,6 +620,9 @@ def maybe_vacuum(config: Config, warnings: list[str], skipped: list[str], dry_ru
             mark_skipped(skipped, "SQLite vacuum")
             return
         warnings.append(f"SQLite VACUUM failed: {error}")
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def execute(config: Config, dry_run: bool) -> dict[str, Any]:
